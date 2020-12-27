@@ -1,0 +1,461 @@
+---
+title: "M733 Assignment 3: Airline Key Drivers Analysis and Visualization"
+subtitle: "Using Shiny, FlexDashboard and others"
+author:
+  name: Faraz Ahmadi 
+  affiliation: MSc Candidate | Computational Science and Engineering, McMaster University
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document: 
+    number_sections: TRUE
+    code_folding: hide
+    toc: yes
+    toc_depth: 6
+    toc_float: 
+      toc_collapsed: 
+    theme: readable
+runtime: shiny
+---
+
+
+```{r setup, eval=TRUE, include=FALSE}  
+knitr::opts_chunk$set( echo=TRUE, warning=FALSE, message=FALSE, error=FALSE, comment = NA)
+```  
+
+```{r "basic_packages" , eval=TRUE, include=FALSE}
+pacman::p_load(psych, xray , ggplot2, texreg, DT, wrapr, dplyr,
+               sjmisc, sjlabelled, sjstats, sjPlot, excelR,
+               knitr, kableExtra, captioner, car)
+
+options(max.print = 10000)
+options(scipen=999)
+```  
+
+# Reading data   
+
+For this analysis we will use the imputed and recoded version of the airline perception data. It is loaded from the server below.
+
+```{r,fig.align='center'}
+df0 <- read.csv( "./Airline_Key_Drivers_mimv.csv" )
+frq(df0$FlyAgain2, out="v", title = "Number of returning customers")
+
+```
+<br> <br>
+In the excel table below, some basic statistics of the attributes is shown.
+
+```{r, fig.align='center'}
+describe(df0[2:13], fast=T) %>% excelTable(data= . )
+```
+
+# Exploratory Data Analysis
+
+## Mean score in drivers
+
+Airline performance was obtained from customers on 9-point scales where 9 was strongly agree. The graph below shows that the airline received the highest ratings for customer service attributes such as courtesy, friendliness, easy reservations, helpfulness and service. The lowest ratings were for ticket prices, flight options, preferred seats and overhead storage. Seat comfort, clean aircraft and seat roominess attracted mid-range values. While the mean ratings do not appear to be especially low, comments need to be based on historical values and comparison with attribute means of competing airlines.
+
+```{r, echo=FALSE}
+library(reshape2)
+
+df_yes <- df0 %>% filter(FlyAgain2=='Yes')
+df_no <-  df0 %>% filter(FlyAgain2=='No')
+
+colmea <- function(x){
+  att_means <- as.data.frame( colMeans( x[2:13]) )
+  att_means[2] <- row.names(att_means)
+  rownames(att_means) <- c()
+  att_means <- att_means[, c(2,1)]
+  colnames(att_means) <- c("Attribute", "Attribute_Means")
+  return(att_means)
+}
+
+```
+
+```{r "attribute_means"}
+
+att_means <- colmea(df0)
+
+ggplot(att_means , aes(y=Attribute_Means, x= reorder(Attribute, Attribute_Means)     )) + 
+  geom_point( size = 10, colour = "darkorange") +
+  geom_segment( aes(x=Attribute, xend=Attribute, y=0, yend=Attribute_Means) , size = 1.8, colour="turquoise") +
+  geom_label( aes(Attribute, Attribute_Means + 0.8, label = signif(Attribute_Means, 2)), colour = "black", nudge_x = 0.15, size = 5) +
+  labs(y= "Attribute mean over whole data", x="Attribute") +
+  theme_blank() + 
+  coord_flip() +
+  theme(axis.text= element_text(size=14, face="bold"), axis.title=element_text(size=14, face="bold"))
+
+```
+
+The following are the same plot but for different populations of airline data. Meaning returning or non-returning customers.
+
+```{r}
+att_means_yes <- colmea(df_yes)
+
+ggplot(att_means_yes , aes(y=Attribute_Means, x= reorder(Attribute, Attribute_Means)     )) + 
+  geom_point( size = 10, colour = "darkorange") +
+  geom_segment( aes(x=Attribute, xend=Attribute, y=0, yend=Attribute_Means) , size = 1.8, colour="turquoise") +
+  geom_label( aes(Attribute, Attribute_Means + 0.8, label = signif(Attribute_Means, 2)), colour = "black", nudge_x = 0.15, size = 5) +
+  labs(y= "Attribute mean over returning customers", x="Attribute") +
+  theme_blank() + 
+  coord_flip() +
+  theme(axis.text= element_text(size=14, face="bold"), axis.title=element_text(size=14, face="bold"))
+```
+
+```{r}
+att_means_no <- colmea(df_no)
+
+ggplot(att_means_no , aes(y=Attribute_Means, x= reorder(Attribute, Attribute_Means)     )) + 
+  geom_point( size = 10, colour = "darkorange") +
+  geom_segment( aes(x=Attribute, xend=Attribute, y=0, yend=Attribute_Means) , size = 1.8, colour="turquoise") +
+  geom_label( aes(Attribute, Attribute_Means + 0.8, label = signif(Attribute_Means, 2)), colour = "black", nudge_x = 0.15, size = 5) +
+  labs(y= "Attribute mean over NOT returning customers", x="Attribute") +
+  theme_blank() + 
+  coord_flip() +
+  theme(axis.text= element_text(size=14, face="bold"), axis.title=element_text(size=14, face="bold"))
+```
+
+
+
+## Distribution of drivers
+
+By looking at the values of different drivers, it can be seen that the data is skewed toward higher perceptions about the airline. Meaning the majority of customers had good opinion about the airline, which is very good for us. The downside however, is that it might be puzzling to analyze customers who will not return. We will see more of this in next analyses.
+
+```{r}
+##To reorder factor columns for plot labels
+library(wrapr)
+ftt <- function(x) { factor(x, levels = c("Strongly Disagree", "2", "3", "4", "5", "6", "7", "8", "Strongly Agree"  ) ) }
+df0[, 26:37] <- 26:37 %.>% ( function(x) { lapply( df0[, (x)], ftt ) } )  (.)
+
+#making a list of plots, par(mfrow=...) does not work with ggplot!
+plot_list <- list()
+library(gridExtra)
+
+for (i in c(26:37)){
+  g <- ggplot(df0, aes_string(x=df0[,i]))+
+    geom_bar(fill='lightblue') +
+    ggtitle(names(df0)[i]) +
+    scale_x_discrete( limits=levels(as.factor(df0[, i])),
+                     labels=c("Strongly Disagree", " ",3:7, " ", "Strongly Agree")) +
+    xlab("")+
+    theme(title = element_text(size=10, colour = "orange2", face = "bold"))
+
+  plot_list[[i-25]] <- g
+}
+```
+
+```{r, fig.height=20}
+marrangeGrob(plot_list, ncol=2, nrow = 6)
+```
+
+
+# Correlation among predictors
+
+Correlation can harm the logistic regression model. So, a multicollinearity analysis is needed to see which predictors are associated with each other. Removing the duplicate information may result in a better and more simple model.
+
+```{r}
+library(ggcorrplot)
+corr <- as.matrix(round(cor(df0[,2:13]), 2))
+p <- ggcorrplot(corr ,
+           hc.order = TRUE,
+           lab = TRUE,
+           type = "lower",
+           lab_size = 3,
+           method = "circle",
+           colors = c("tomato2", "white", "springgreen3"),
+           title = "Correlogram of Airline Key Drivers", 
+          
+           )
+p
+```
+
+```{r}
+library(wesanderson)
+library("qgraph")
+wes <- wes_palette("Darjeeling1")
+
+df12 <- df0[,c(2:13)]
+#node_color<-c("aquamarine","lightgoldenrod","lightpink","cyan")
+node_color<-wes[2:5]
+qgraph(cor(df12), layout="spring",
+       labels=names(df12), label.scale=FALSE,
+       label.fill.vertical=0.8,
+       label.cex=1, node.width=1, minimum=.1, maximum=.6,
+       color=node_color, lty=1, esize=2, posCol="blue", negCol="red",
+       title="")
+```
+
+The next plot shows the islands of different attributes well. Although these attributes are not much correlated with eachother but you can see that Courtesy, Frienliness, Service and Helpfulness are closley correlated. Also, Seat Comfort, Seat Roominess, Clean Aircraft and Overhead Stoarage have a postiive linear relationship.
+
+```{r}
+library(corrr)
+df12 %>% correlate() %>% network_plot(min_cor = 0.5)
+```
+
+<!-- will not install! -->
+
+<!-- ```{r} -->
+<!-- df12_matrix <- data.matrix(df12) -->
+<!-- #  -->
+<!-- # library(d3heatmap) -->
+<!-- # d3heatmap(df12_matrix, scale = "column", dendrogram = "both", -->
+<!-- #           color = "Spectral") -->
+<!-- ``` -->
+
+# Correspondence Analysis
+
+The object analysed in previous sections was the attributes of single individuals, however, using that in a CA analysis would not be effective and readable as there are many sample points to be shown in the plot. Therefore we use a combination of attribute means for both groups of returning and non-returning customers.
+
+It can be seen that one dimesnion is responsible for almost all __(99.63%)__ the changes in attributes. This plot could be examined in a number of ways.
+
+```{r echo=FALSE, include=FALSE}
+att <- cbind(att_means_yes, att_means_no)
+att <- att[,c(1,2,4)]
+names(att) <- c("", "Return", "Not return")
+att
+rownames(att)
+y <- as.data.frame(t(att))
+colnames(y) <- y[1,]
+y<- y[c(2,3),]
+
+rownames(att) <- att[,1]
+```
+
+```{r}
+library(FactoMineR)
+df12_matrix <- data.matrix(att)
+c <- CA(df12_matrix, graph=FALSE)
+plot(c, title="Correspondence Analysis of Airline Key Drivers", col.main="blue" )
+```
+
+
+# Logistic regression on each predictor separately
+
+All 12 attitude variables can be used in this analysis and the full sample is divided to a train-test subset. All models are trained with the training data set.
+
+```{r}
+library(caret)
+set.seed(3456)
+df0$FlyAgain2 <- factor(df0$FlyAgain2)
+trainIndex <- createDataPartition(df0$FlyAgain2, p = .7, list = FALSE)
+train  <- df0[ trainIndex,]
+test   <- df0[-trainIndex,]
+```
+
+```{r, echo = FALSE}
+library(shiny)
+library(rhandsontable)
+dataset <- train
+```
+
+
+```{r, echo = FALSE}
+shinyApp(
+
+  ui = pageWithSidebar(
+  headerPanel('Airline key drivers regression in shiny'),
+  sidebarPanel(
+     selectInput('ycol',   'Y Variable', names(dataset),
+                selected=names(dataset)[[24]]), 
+ 
+     selectInput('x1col', 'X Variable 1', names(dataset)[2:13],
+                selected= names(dataset)[[2]])
+   
+  ),
+  mainPanel(
+    tabPanel("Model",                   
+            verbatimTextOutput("fit")) ,
+
+    tabPanel("data", verbatimTextOutput("ycol")),
+
+    tabPanel("Plot", plotOutput("plot1") ),
+
+    tabPanel("summary", verbatimTextOutput("summary") ) 
+  )
+  ),
+  
+  server = function(input, output, session) {
+  # Combine the selected variables into a new data frame
+  selectedData <- reactive({
+    dataset[, c(input$ycol, input$x1col)]
+  })
+  
+  # regression formula
+  regFormula <- reactive({
+    as.formula(paste(input$ycol, '~', input$x1col))
+  })
+  
+ fit <- reactive({
+    glm(regFormula(), selectedData(), family=binomial) #MUST EXPRESS REGRESSION, X , Y #fs<-
+  })
+  
+ # bivariate model
+  output$fit <- renderPrint({
+    summary(fit())
+  })
+  
+observe({input$ycol})
+  },
+options = list(height = 400)
+)
+
+```  
+
+# Logistic regression on multiple predictors
+
+In this section the shiny app is tailored to have multiple predictors and build the regression model based on them. It will show results and change in real time. Predictors can be selected from the side-bar and the model and all of its results will be based on those variables.
+
+In addition to a plot showing each variables importance, the ROC curve and confusion matrix are also available in different tabs below.
+
+```{r, echo=FALSE}
+library(caret)
+library(sjPlot)
+####################### IMPORTANCE FUNCTION #################
+computeImp <- function(x){
+  var_imp <- varImp(x)
+  var_imp[,2] <- rownames(var_imp)
+  var_imp <- var_imp[,c(2,1)]
+  rownames(var_imp) <- c()
+  names(var_imp) <- c("var", "imp")
+  return(var_imp)
+}
+#######################ROC PLOT FUCNTION####################
+
+library(qwraps2)
+library(ggplot2)
+roc_plot <- function(x){
+
+
+  data1 <- qroc_build_data_frame(x)
+  a1 <- auc(data1)
+  
+  plot_data <- cbind(Model = paste("model.fin\nauc =", round(auc(data1), 3)), data1)
+  qroc(plot_data) +
+    theme_bw() +
+    aes(color = Model, linetype = Model) +
+    theme(legend.position = "bottom",
+          legend.text.align = 0.5)
+}
+```
+
+```{r, echo = FALSE}
+shinyApp(
+
+  ui = pageWithSidebar(
+  headerPanel('Airline key drivers regression in shiny'),
+  sidebarPanel(
+     selectInput('ycol',   'Y Variable', names(dataset),
+                selected=names(dataset)[[24]]), 
+     
+     checkboxGroupInput('xcol',label = "X Variables (Predictors):",
+                        choices = names(dataset)[2:13], selected = c("Helpfulness", "Seat_Comfort", "Flight_Options")),
+     
+     actionButton("Uncheck", label="Unselect all"),
+     shiny::tags$br(),
+     actionButton("checkall", label="Select all"),
+     
+    
+  ),
+  mainPanel(
+    navbarPage(title = "Logistic Regression", 
+               tabPanel("Model Summary",
+                tabPanel("Model",                   
+                        verbatimTextOutput("fit")) ,
+            
+                tabPanel("data", verbatimTextOutput("ycol")),
+                
+                tabPanel("Plot", plotOutput("plot1") ),
+            
+                tabPanel("summary", verbatimTextOutput("summary") )
+    
+               ),
+               tabPanel("Test Result",
+                        tabPanel(title = "Confusion Matrix for test data", verbatimTextOutput("testRes"))),
+               tabPanel("ROC curve",
+                        tabPanel(title= "whatever,this doesnt show!", plotOutput("plot_roc")))
+               )
+  )
+  ),
+  
+  server = function(input, output, session) {
+  # Combine the selected variables into a new data frame
+  selectedData <- reactive({
+    dataset[, c(input$ycol, input$xcol)]
+  })
+  
+  # regression formula
+  regFormula <- reactive({
+    as.formula(paste(input$ycol, '~', paste(input$xcol, collapse = '+')))
+  })
+  
+ fit <- reactive({
+    glm(regFormula(), selectedData(), family=binomial) #MUST EXPRESS REGRESSION, X , Y #fs<-
+  })
+ 
+ var_imp <- reactive({
+   computeImp(fit())
+ })
+  
+ # bivariate model
+  output$fit <- renderPrint({
+    summary(fit())
+  })
+  
+  output$plot1 <- renderPlot({
+    ggplot(var_imp(), aes(x = reorder(var,imp), y=imp)) +
+    geom_col(fill = wes[5])+
+    coord_flip() +
+    theme_blank() +
+    ggtitle("Predictor Importance in Training data") +
+    ylab("Importance") + xlab("")
+  })
+  
+  observe({input$ycol})
+
+  observe({
+    if (input$Uncheck > 0) {
+      updateCheckboxGroupInput(session=session, inputId = 'xcol',
+                        choices = names(dataset)[2:13], selected=NULL)
+    }
+    })
+    
+  observe({
+    if (input$checkall > 0) {
+      updateCheckboxGroupInput(session=session, inputId = 'xcol',
+                        choices = names(dataset)[2:13], selected=names(dataset)[2:13])
+    }
+  })
+  
+  ###For second tab
+  
+  output$testRes <- renderPrint({
+    #confusion matrix
+    predict_Return <- predict(fit(), test, type="response")
+    predict_R <- ifelse( predict_Return > 0.5, "Yes", "No")
+    predict_R <- factor(predict_R)
+    confusionMatrix(predict_R, test$FlyAgain2)
+  })
+  
+  ### Third Tab
+  output$plot_roc <- renderPlot({
+    roc_plot(fit())
+  })
+  },
+  
+  options = list(height = 900)
+)
+```
+
+<br>
+<br>
+<br>
+
+# FlexDashboard
+
+A flexdashboard files is attached to this assignment which includes some additonal visualization of the data.
+
+
+&nbsp;
+<hr />
+<p style="text-align: center;">Thanks for your time</p>
+<p style="text-align: center;">Faraz Ahmadi</p>
+<p style="text-align: center;"><span style="color: #808080;"><em>ahmadf32@mcmaster.ca</em></span></p>
+&nbsp;  

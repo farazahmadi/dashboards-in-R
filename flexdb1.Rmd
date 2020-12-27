@@ -1,0 +1,235 @@
+---
+title: "Flex Dash Assignment 3"
+date: "`r format(Sys.time(), '%d %B, %Y, %H:%M')`"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: scroll
+    social: menu
+    source_code: embed
+    theme: readable
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(ggplot2)
+library(shiny)
+library(plotly)
+library(reshape2)
+
+```
+
+
+```{r}
+df0 <- read.csv( "./Airline_Key_Drivers_mimv.csv" )
+
+#factoring the and ordering them right to not have a problem in ploting
+
+library(wrapr)
+ftt <- function(x) { factor(x, levels = c("Strongly Disagree", "2", "3", "4", "5", "6", "7", "8", "Strongly Agree"  ) ) }
+df0[, 26:37] <- 26:37 %.>% ( function(x) { lapply( df0[, (x)], ftt ) } )  (.)
+```
+
+Page 1: General Info 
+=======================================================================
+
+Column {.sidebar} 
+-----------------------------------------------------------------------
+
+### Input Panel
+
+Select a sample size below
+
+```{r}
+sliderInput('sampleSize', 'Sample Size', min=100, max=nrow(df0),
+            value=200, step=50, round=0)
+
+checkboxInput('jitter', 'Jitter', value = F)
+checkboxInput('smooth', 'Smooth', value = F)
+
+selectInput('x', 'X', names(df0)[], names(df0)[2])
+selectInput('y', 'Y', names(df0), names(df0)[25])
+selectInput('color', 'Color', c('None', names(df0)))
+
+```
+
+
+Column {vertical_layout: fill}
+-----------------------------------------------------------------------
+### Figure 1. Scatter plot
+
+```{r}
+  dataset <- reactive({
+    df0[ sample(nrow(df0), input$sampleSize) , ]
+  })
+```
+
+```{r}
+renderPlot({
+
+  p <- ggplot(dataset(), aes_string(x=input$x, y=input$y)) +
+    geom_point() + 
+    scale_x_discrete(name =input$x, limits=levels(as.factor(df0[,input$x]))) +
+    theme(axis.text= element_text(size=14, face="bold"), axis.title=element_text(size=14, face="bold")) 
+  
+  if (input$color != 'None')
+    p <- p + aes_string(color=input$color)
+  
+  # facets <- paste(input$facet_row, '~', input$facet_col)
+  # if (facets != '. ~ .')
+  #   p <- p + facet_grid(facets)
+  # 
+  if (input$jitter)
+    p <- p + geom_jitter()
+  if (input$smooth)
+    p <- p + geom_smooth(method = "glm")
+  
+  print(p)
+})
+```
+
+
+### Figure 2. Bar plot
+
+```{r}
+renderPlotly({
+  p1 <- ggplot(dataset(), aes_string(x=input$x, fill = input$y)) + stat_count(width = .2) +
+    geom_bar() +
+    scale_x_discrete(name =input$x, limits=levels(as.factor(df0[,paste(input$x)])))+
+    annotate("text", x=1, y=50,hjust=1,vjust=0, label=paste("Base= ", input$sampleSize),  size=4)
+  
+  print(plotly::ggplotly(p1))
+})
+```
+
+Page 2: Mean Analysis among predictors
+=======================================================================
+
+Column {.sidebar}
+-----------------------------------------------------------------------
+
+### Input Panel
+
+Select the section of population you want depicted in the plot.
+
+```{r}
+
+selectInput('mean', 'Select Data Section', c("Returning Customers" = "1",
+                                             "Not Returning Customers"= "2",
+                                             "All Customers"= "3"), c("All Customers"))
+
+```
+
+
+Column {data-width=200}
+-----------------------------------------------------------------------
+### Figure 1. Candy Plot of Means
+
+```{r, echo=F}
+
+colmea <- function(x){
+  att_means <- as.data.frame( colMeans( x[2:13]) )
+  att_means[2] <- row.names(att_means)
+  rownames(att_means) <- c()
+  att_means <- att_means[, c(2,1)]
+  colnames(att_means) <- c("Attribute", "Attribute_Means")
+  return(att_means)
+}
+
+att_means <- reactive({
+  df <- df0
+  if(input$mean == 1)
+    df <- df0 %>% filter(FlyAgain2=='Yes')
+  if(input$mean == 2)
+    df <- df0 %>% filter(FlyAgain2=='No')
+  
+  colmea(df)
+  })
+
+
+
+```
+
+```{r}
+renderPlot({
+  ggplot(att_means() , aes(y=Attribute_Means, x= reorder(Attribute, Attribute_Means)     )) + 
+    geom_point( size = 10, colour = "darkorange") +
+    geom_segment( aes(x=Attribute, xend=Attribute, y=0, yend=Attribute_Means) , size = 1.8, colour="turquoise") +
+    geom_label( aes(Attribute, Attribute_Means + 0.8, label = signif(Attribute_Means, 2)), colour = "black", nudge_x = 0.15, size = 5) +
+    labs(y= "Attribute mean over returning customers", x="Attribute") +
+    ggplot2::theme_classic() + 
+    coord_flip() +
+    theme(axis.text= element_text(size=14, face="bold"), axis.title=element_text(size=14, face="bold"))
+})
+```
+
+
+Page 3: Correlations among attitudes {data-orientation=rows}
+=======================================================================
+
+Row { }
+-----------------------------------------------------------------------
+
+### Using ggcorrplot
+
+```{r fig.width=9, fig.height=9}
+library(ggplot2)
+library(ggcorrplot)
+corr <- as.matrix(round(cor(df0[,2:13]), 2))
+ggcorrplot(corr ,
+           hc.order = TRUE,
+           lab = TRUE,
+           type = "lower",
+           lab_size = 3,
+           method = "circle",
+           colors = c("tomato2", "white", "springgreen3"),
+           title = "Correlogram of Airline Key Drivers"
+           )
+```
+
+Row { }
+-----------------------------------------------------------------------
+
+### Using PerformanceAnalytics (labels very small)
+
+```{r fig.width=12, fig.height=12}
+library(PerformanceAnalytics)
+chart.Correlation(df0[,2:13], histogram = TRUE, pch = 19)
+```
+
+Row { }
+-----------------------------------------------------------------------
+
+### Network plot using qgraph
+
+```{r fig.width=12, fig.height=12}
+
+library(wesanderson)
+library("qgraph")
+wes <- wes_palette("Darjeeling1")
+
+df12 <- df0[,c(2:13)]
+#node_color<-c("aquamarine","lightgoldenrod","lightpink","cyan")
+node_color<-wes[2:5]
+qgraph(cor(df12), layout="spring",
+       labels=names(df12), label.scale=FALSE,
+       label.fill.vertical=0.8,
+       label.cex=1, node.width=1, minimum=.1, maximum=.6,
+       color=node_color, lty=1, esize=2, posCol="blue", negCol="red",
+       title="")
+
+```
+
+
+Row { }
+-----------------------------------------------------------------------
+
+### Network plot  using corrr and network_plot
+
+```{r fig.width=12, fig.height=12}
+library(corrr)
+library(tidyverse)
+df0[,2:13] %>% correlate() %>% network_plot(min_cor = 0.5)
+```
+
