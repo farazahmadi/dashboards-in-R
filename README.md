@@ -1,6 +1,6 @@
 # dashboards-in-R
 
-In this project I create executive-styled dashbaords and visualizations of the airline data that I worked with [here](../key-driveres-airline).
+In this project I created executive-styled dashbaords and visualizations of the airline data that I worked with [here](../key-driveres-airline).
 
 This was the first time that I worked with `shiny` `flexdb` in R.
 
